@@ -4,7 +4,7 @@ from scipy.linalg import cho_factor, cho_solve
 from sklearn.metrics.pairwise import rbf_kernel, linear_kernel
 from sklearn.metrics import accuracy_score, log_loss
 
-class ImportVectorMachine:
+class IVM: # import vector machine
     def __init__(self, kernel="rbf", kernel_params=None, lambda_=0.5,
                  tol=1e-2, max_sel=200, top_k=10, proxy_type="gradient",
                  verbose=True):
