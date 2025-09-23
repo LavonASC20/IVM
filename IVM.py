@@ -6,13 +6,13 @@ from sklearn.metrics import accuracy_score, log_loss
 
 class IVM: # import vector machine
     def __init__(self, kernel="rbf", kernel_params=None, lambda_=0.5,
-                 tol=1e-2, max_sel=200, top_k=10, proxy_type="gradient",
+                 tol=1e-2, max_sel=None, top_k=10, proxy_type="gradient",
                  verbose=True):
         self.kernel = kernel
         self.kernel_params = kernel_params or {"gamma": 1.0}
         self.lambda_ = lambda_
         self.tol = tol
-        self.max_sel = max_sel
+        self.max_sel = max_sel if max_sel > 0 else np.inf
         self.top_k = top_k
         self.proxy_type = proxy_type
         self.verbose = verbose
@@ -70,6 +70,9 @@ class IVM: # import vector machine
             p = expit(K_XS @ a).reshape(-1) if m > 0 else expit(np.zeros(n))
 
             K_XR = self.K_train[:, R_idx]
+
+            #-------------------------------------------------------------------------------------------------
+            ''' Proxy Statistic Computation'''
             if self.proxy_type == "gradient":
                 grad_all = K_XR.T @ (y - p)
             elif self.proxy_type == "var_grad":
@@ -79,14 +82,10 @@ class IVM: # import vector machine
                 grad_all = np.einsum("ij,i,ij->j", K_XR, W, K_XR)
             elif self.proxy_type == "wald":
                 W = p * (1 - p)
-                fisher_info = np.einsum("ij,i,ij->jk", K_XR, W, K_XR) + self.lambda_ * np.eye(m + 1)
-                try:
-                    c, lower = cho_factor(fisher_info, check_finite=False)
-                    fisher_info_inv = cho_solve((c, lower), np.eye(m + 1), check_finite=False)
-                except np.linalg.LinAlgError:
-                    fisher_info_inv = np.linalg.inv(fisher_info)
-                grad_all = (K_XR.T @ (y - p)).reshape(-1, 1)
-                grad_all = (grad_all.T @ fisher_info_inv).reshape(-1)
+                fisher_info = np.einsum("ij,i,ij->jk", K_XR, W, K_XR) + self.lambda_ * np.eye(len(R_idx))
+                grad_all = (K_XR.T @ (y - p)).reshape(-1)   # U
+                fisher_diag = np.diag(fisher_info)          # I_jj
+                grad_all = (grad_all ** 2) / (fisher_diag + 1e-12)
             else:
                 raise ValueError("Unknown proxy_type")
 
@@ -95,7 +94,8 @@ class IVM: # import vector machine
                 break
             
             top_local = np.argsort(-np.abs(grad_all))[:ranks]
-
+            #-------------------------------------------------------------------------------------------------
+            '''Objective Evaluation for Top Candidates'''
             best_H, best_idx, best_a = np.inf, None, None
             for local_j in top_local:
                 cand_idx = int(R_idx[local_j])
@@ -114,7 +114,8 @@ class IVM: # import vector machine
                 H = -np.dot(y, Ka_a_new.reshape(-1)) + np.sum(np.logaddexp(0, Ka_a_new)) + (self.lambda_/2) * float(a_new.T @ K_q @ a_new)
                 if H < best_H:
                     best_H, best_idx, best_a = H, cand_idx, a_new
-
+            #-------------------------------------------------------------------------------------------------
+            
             if best_idx is None: 
                 break
             S_idx.append(best_idx)
@@ -132,6 +133,7 @@ class IVM: # import vector machine
                 if self.verbose: 
                     print("Reached max_sel")
                 break
+
 
         self.S_idx, self.err_H, self.a = S_idx, err_H, a
         return self
